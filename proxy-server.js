@@ -5,26 +5,23 @@ const { OpenAI } = require('openai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 1. 基础中间件
 app.use(cors());
 app.use(express.json());
 
-// 2. 初始化 DeepSeek 客户端
 const client = new OpenAI({
     baseURL: 'https://api.deepseek.com',
     apiKey: process.env.DEEPSEEK_API_KEY 
 });
 
-// 3. 工具函数定义
 const tools = [{
     type: "function",
     function: {
         name: "generate_smart_formation",
-        description: "分析足球战术需求，按时序规划跑位、传球与射门动作",
+        description: "按时序拆解足球战术：包含接球跑位、传球链路与射门动作",
         parameters: {
             type: "object",
             properties: {
-                logic: { type: "string", description: "战术逻辑详细描述（包含步骤）" },
+                logic: { type: "string", description: "战术步骤描述（如：步骤1...步骤2...）" },
                 updated_stats: {
                     type: "array",
                     items: {
@@ -42,6 +39,7 @@ const tools = [{
                         }
                     }
                 },
+                // 🌟 重要：这里的 positions 代表动作发生前或过程中的瞬时跑位
                 positions: { 
                     type: "array", 
                     items: {
@@ -55,15 +53,15 @@ const tools = [{
                 },
                 tactical_actions: {
                     type: "array",
-                    description: "必须按执行顺序排列的战术动作数组",
+                    description: "必须严格按发生顺序排列的交互链",
                     items: {
                         type: "object",
                         properties: {
                             type: { type: "string", enum: ["pass", "shot"] },
                             fromLabel: { type: "string" },
-                            toLabel: { type: "string" },
-                            targetX: { type: "number" },
-                            targetY: { type: "number" }
+                            toLabel: { type: "string", description: "若是传球，这是接球手的编号" },
+                            targetX: { type: "number", description: "传球/射门的目标落点X" },
+                            targetY: { type: "number", description: "传球/射门的目标落点Y" }
                         },
                         required: ["type", "fromLabel"]
                     }
@@ -74,7 +72,6 @@ const tools = [{
     }
 }];
 
-// 4. 流式接口逻辑
 app.post('/api/deepseek', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -83,32 +80,31 @@ app.post('/api/deepseek', async (req, res) => {
     try {
         const { teamData, customSkill } = req.body; 
 
-        // 🌟 核心：注入时序逻辑协议
-        const baseSystemPrompt = `你是一个具备【时序逻辑】的足球战术推演引擎。
-你必须调用 generate_smart_formation 并按以下协议规划战术：
+        // 🌟 核心协议升级：强调“动静结合”
+        const baseSystemPrompt = `你是一个专业的足球战术动态推演引擎。你的任务是策划一组具有【真实动感】的进攻流程。
 
-【核心规则：时序推演】
-1. tactical_actions 必须按发生的先后顺序排列（如：传球1 -> 传球2 -> 射门）。
-2. 每一个动作必须包含：发起者(fromLabel)、接收者(toLabel)或目标点。
-3. 空间约束：8人制场地较小，确保传球距离合理，不要出现全场瞬移。
+【核心时序协议】：
+1. 联动跑位：在 generate_smart_formation 的 positions 中，设置的坐标必须是接球手(toLabel)前往接球的目标位置。
+2. 动作与位移同步：tactical_actions 中的每一组 fromLabel 和 toLabel 应当与 positions 中的坐标调整相对应。
+3. 真实性约束：禁止瞬移。8人制足球中，传球距离不应超过500单位。
+4. 顺序逻辑：
+   - 步骤1：传球手寻找空间，接球手启动跑位。
+   - 步骤2：传球发出，线段指向 positions 中接球手的新坐标。
+   - 步骤3：完成射门。
 
-【球员特质匹配】
-- 扫描 teamData，识别 PAC(速度)、PAS(传球)、SHO(射门) 最高的球员。
-- 快速反击：必须由高 PAS 球员发起长传，高 PAC 球员前插接球。
-- 角球：高 PAS 球员罚球，高 PHY 球员在点球点包抄。
+【特质映射】：
+- PAC最高者：必须安排在 tactical_actions 中作为接球手执行前插跑位。
+- PAS最高者：作为链路的发起点。
 
-【输出格式约束】
-- logic：用主教练口吻描述战术步骤（第1步、第2步...）。
-- updated_stats：同步强化本次战术涉及的明星球员属性。
-- positions：这是战术结束时的【最终站位】。
+【输出要求】：
+- logic：分步骤陈述，每一步必须提到谁在跑，谁在传。
+- updated_stats：体现球员在该战术下的巅峰状态。
 
-【场制识别】：根据球员总数自动判断（16人为8人制，22人为11人制）。
-【球场规范】：x[0-1000], y[0-650]。红色攻左向右，目标球门中心(1000, 325)。
+【场制】：根据 teamData 人数自适应（16人为8人制，22人为11人制）。
+【坐标系】：x[0-1000], y[0-650]。红队从左向右进攻。
 
-【当前战术需求】：${customSkill || "执行常规进攻"}
-【球员实时数据】：${JSON.stringify(teamData)}`;
-
-        res.write(`data: ${JSON.stringify({ stage: "📡 正在分析球员特质并规划推演时序..." })}\n\n`);
+【当前战术需求】：${customSkill || "执行流畅的整体进攻"}
+【实时球员数据】：${JSON.stringify(teamData)}`;
 
         const stream = await client.chat.completions.create({
             model: "deepseek-chat", 
@@ -118,16 +114,13 @@ app.post('/api/deepseek', async (req, res) => {
             stream: true,
         });
 
-        res.write(`data: ${JSON.stringify({ stage: "🧠 正在生成连续战术步骤..." })}\n\n`);
-
         let fullArguments = "";
         for await (const chunk of stream) {
             const toolCall = chunk.choices[0].delta.tool_calls?.[0];
             if (toolCall?.function?.arguments) {
                 fullArguments += toolCall.function.arguments;
-                // 优化：不再每行输出，保持单行更新
                 if (fullArguments.length % 120 === 0) { 
-                    res.write(`data: ${JSON.stringify({ stage: "⚽ 正在校准动态路径..." })}\n\n`);
+                    res.write(`data: ${JSON.stringify({ stage: "⚽ 正在计算球员跑位与球速同步..." })}\n\n`);
                 }
             }
         }
@@ -137,17 +130,14 @@ app.post('/api/deepseek', async (req, res) => {
             res.write(`data: ${JSON.stringify({ 
                 final: true,
                 analysis: args.logic,
-                execute_action: "UPDATE_PLAYERS",
                 new_player_data: args.positions,
                 updated_stats: args.updated_stats,
                 tactical_actions: args.tactical_actions
             })}\n\n`);
         } catch (e) {
-            res.write(`data: ${JSON.stringify({ error: "战术逻辑构建失败，请重试。" })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: "战术逻辑计算超载，请简化指令。" })}\n\n`);
         }
-        
         res.end();
-
     } catch (error) {
         console.error('API Error:', error.message);
         res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
@@ -156,5 +146,5 @@ app.post('/api/deepseek', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 战术大师（时序逻辑版）已启动！端口: ${PORT}`);
+    console.log(`🚀 真实动感战术引擎已启动！端口: ${PORT}`);
 });
