@@ -33,10 +33,11 @@
 </head>
 <body>
 
-<header><h1>Tactical Pro v3.2</h1></header>
+<header><h1>Tactical Pro v3.3</h1></header>
 
 <div class="main-layout">
     <div class="canvas-container"><canvas id="tacticsCanvas" width="1000" height="650"></canvas></div>
+    
     <div class="side-panel">
         <div class="control-card">
             <div class="header-row">
@@ -45,6 +46,7 @@
             </div>
             <textarea id="skillConfig" placeholder="指令：10号身后球找7号，7号底线倒三角..."></textarea>
         </div>
+
         <div class="control-card">
             <div class="button-grid">
                 <button id="dragModeBtn" class="mode-active">🎮 移动</button>
@@ -56,6 +58,7 @@
                 <button id="analyzeAiBtn">▶ 启动 AI 战术引擎</button>
             </div>
         </div>
+
         <div class="control-card analysis-card" id="analysisPanel">
             <div id="analysisText" style="font-size: 12px; line-height: 1.6; color: #fff; font-family: 'Consolas', monospace; white-space: pre-wrap;">AI 系统待命...</div>
         </div>
@@ -148,7 +151,7 @@
         });
     }
 
-    // 🌟 核心：单人平滑跑位函数
+    // 🌟 核心：单人平滑跑位
     function animateSinglePlayer(label, tx, ty) {
         return new Promise(resolve => {
             const pIdx = players.findIndex(p => String(p.label) === String(label) && p.team === 'red');
@@ -169,10 +172,29 @@
         });
     }
 
-    // 🌟 核心：连贯动作推演引擎
+    // 🌟 核心：全员战术初始化位移（用于动作开始前的引诱或防守回收）
+    function animateAllPlayers(newPositions) {
+        return new Promise(resolve => {
+            const startTime = performance.now();
+            const startPosMap = players.map(p => ({ x: p.x, y: p.y }));
+            function step(now) {
+                const progress = Math.min((now - startTime) / 800, 1);
+                newPositions.forEach(target => {
+                    const pIdx = players.findIndex(p => String(p.label) === String(target.label) && p.team === 'red');
+                    if (pIdx !== -1) {
+                        players[pIdx].x = startPosMap[pIdx].x + (target.x - startPosMap[pIdx].x) * progress;
+                        players[pIdx].y = startPosMap[pIdx].y + (target.y - startPosMap[pIdx].y) * progress;
+                    }
+                });
+                drawCanvas();
+                if (progress < 1) requestAnimationFrame(step); else resolve();
+            }
+            requestAnimationFrame(step);
+        });
+    }
+
     async function runTacticsStepByStep(data, textDiv, btn) {
         try {
-            // 1. 先同步所有未参与动作的球员的基础位置
             if (data.updated_stats) {
                 data.updated_stats.forEach(item => {
                     const p = players.find(p => String(p.label) === String(item.label) && p.team === 'red');
@@ -180,29 +202,33 @@
                 });
             }
 
-            textDiv.innerText = `[AI 真实推演]\n${data.analysis}\n-------------------`;
+            textDiv.innerText = `[AI 动态推演引擎]\n${data.analysis}\n-------------------`;
             lines = [];
 
+            // 第一步：先让全员执行战术预设站位（如回撤引诱）
+            textDiv.innerText += `\n>> 初始化战术站位...`;
+            await animateAllPlayers(data.new_player_data);
+            await sleep(400);
+
             if (data.tactical_actions && data.tactical_actions.length > 0) {
-                for (const act of data.tactical_actions) {
-                    textDiv.innerText += `\n>> 执行: ${act.type === 'pass' ? '传球协作' : '终结一击'}...`;
-                    
+                for (let i = 0; i < data.tactical_actions.length; i++) {
+                    const act = data.tactical_actions[i];
+                    textDiv.innerText += `\n>> 执行步骤 ${i+1}: ${act.type === 'pass' ? '精准传递' : '致命打击'}`;
+
                     const fromIdx = players.findIndex(p => String(p.label) === String(act.fromLabel) && p.team === 'red');
-                    
-                    // 🌟 A. 传球逻辑：球线指向目标点，接球球员同步跑向该点
+
                     if (act.type === 'pass') {
-                        const targetPos = data.new_player_data.find(p => String(p.label) === String(act.toLabel));
                         const toIdx = players.findIndex(p => String(p.label) === String(act.toLabel) && p.team === 'red');
-                        
+                        const targetPos = data.new_player_data.find(p => String(p.label) === String(act.toLabel));
+
                         if (fromIdx !== -1 && toIdx !== -1 && targetPos) {
-                            // 划线动作
+                            // 🌟 线条先出，指向未来的目标点
                             lines.push({ fromIdx, toIdx, isShot: false });
-                            // 🌟 核心修改：让球员实时跑位到接球点
+                            // 🌟 重点：人球同步！接球人开始跑位
                             await animateSinglePlayer(act.toLabel, targetPos.x, targetPos.y);
                         }
-                    } 
-                    // 🌟 B. 射门逻辑：球员调整位置后起脚
-                    else if (act.type === 'shot') {
+                    } else if (act.type === 'shot') {
+                        // 射门前，射门员跑向终结位
                         const shooterPos = data.new_player_data.find(p => String(p.label) === String(act.fromLabel));
                         if (shooterPos) {
                             await animateSinglePlayer(act.fromLabel, shooterPos.x, shooterPos.y);
@@ -211,9 +237,8 @@
                             lines.push({ fromIdx, isShot: true, targetX: act.targetX || 1000, targetY: act.targetY || 325 });
                         }
                     }
-                    
                     drawCanvas();
-                    await sleep(600); // 动作间歇
+                    await sleep(600);
                 }
             }
         } catch (e) { console.error(e); }
@@ -226,10 +251,8 @@
     async function analyzeWithAI() {
         if (isAiPlaying) return;
         isAiPlaying = true;
-        const btn = document.getElementById('analyzeAiBtn');
-        const textDiv = document.getElementById('analysisText');
-        btn.disabled = true;
-        document.getElementById('analysisPanel').classList.add('show');
+        const btn = document.getElementById('analyzeAiBtn'), textDiv = document.getElementById('analysisText');
+        btn.disabled = true; document.getElementById('analysisPanel').classList.add('show');
         textDiv.innerText = ">> AI 正在深度推演战术逻辑...";
 
         const teamData = players.map(p => ({
@@ -244,10 +267,8 @@
                 body: JSON.stringify({ teamData, customSkill: document.getElementById('skillConfig').value })
             });
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
+            const reader = response.body.getReader(), decoder = new TextDecoder();
             let fullText = "";
-
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -269,7 +290,7 @@
         }
     }
 
-    // 交互绑定
+    // 交互与绑定
     canvas.addEventListener('pointerdown', (e) => {
         if (isAiPlaying) return;
         const rect = canvas.getBoundingClientRect();

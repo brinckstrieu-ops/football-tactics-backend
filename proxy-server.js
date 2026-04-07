@@ -39,7 +39,6 @@ const tools = [{
                         }
                     }
                 },
-                // 🌟 重要：这里的 positions 代表动作发生前或过程中的瞬时跑位
                 positions: { 
                     type: "array", 
                     items: {
@@ -59,9 +58,9 @@ const tools = [{
                         properties: {
                             type: { type: "string", enum: ["pass", "shot"] },
                             fromLabel: { type: "string" },
-                            toLabel: { type: "string", description: "若是传球，这是接球手的编号" },
-                            targetX: { type: "number", description: "传球/射门的目标落点X" },
-                            targetY: { type: "number", description: "传球/射门的目标落点Y" }
+                            toLabel: { type: "string", description: "接收者编号" },
+                            targetX: { type: "number", description: "目标落点X" },
+                            targetY: { type: "number", description: "目标落点Y" }
                         },
                         required: ["type", "fromLabel"]
                     }
@@ -80,30 +79,23 @@ app.post('/api/deepseek', async (req, res) => {
     try {
         const { teamData, customSkill } = req.body; 
 
-        // 🌟 核心协议升级：强调“动静结合”
-        const baseSystemPrompt = `你是一个专业的足球战术动态推演引擎。你的任务是策划一组具有【真实动感】的进攻流程。
+        // 🌟 核心升级：增加【时序严格对齐协议】
+        const baseSystemPrompt = `你是一个专业的足球战术动态推演引擎。
+你的任务是策划一组具有【真实动感】且【逻辑闭环】的进攻流程。
 
-【核心时序协议】：
-1. 联动跑位：在 generate_smart_formation 的 positions 中，设置的坐标必须是接球手(toLabel)前往接球的目标位置。
-2. 动作与位移同步：tactical_actions 中的每一组 fromLabel 和 toLabel 应当与 positions 中的坐标调整相对应。
-3. 真实性约束：禁止瞬移。8人制足球中，传球距离不应超过500单位。
-4. 顺序逻辑：
-   - 步骤1：传球手寻找空间，接球手启动跑位。
-   - 步骤2：传球发出，线段指向 positions 中接球手的新坐标。
-   - 步骤3：完成射门。
+【核心协议：时序严格对齐】：
+1. 步骤一一对应：你在 logic 中描述的“步骤 N”，必须在 tactical_actions 数组中对应索引为 N-1 的动作。严禁 logic 写了 6 步而 actions 只有 5 个。
+2. 动作补全：如果战术从 4 号发起，必须在 tactical_actions 中产生第一个 type: "pass" 动作（fromLabel: "4"）。
+3. 动态接球：
+   - 每一个 "pass" 动作的 toLabel 球员，其在 positions 数组中的坐标必须是该球员去接球的目标点。
+   - 传球线 targetX/Y 必须指向接球手在 positions 中的位置。
+4. 真实性：8人制足球场较小 (1000x650)，球员跑位不应瞬间跨越 500 单位，除非其 PAC 极高。
 
 【特质映射】：
-- PAC最高者：必须安排在 tactical_actions 中作为接球手执行前插跑位。
-- PAS最高者：作为链路的发起点。
+- PAC(速度)表现：高 PAC 球员安排大幅度纵向跑位接球。
+- PAS(传球)表现：高 PAS 球员作为中转枢纽，线段应穿透对方防线。
 
-【输出要求】：
-- logic：分步骤陈述，每一步必须提到谁在跑，谁在传。
-- updated_stats：体现球员在该战术下的巅峰状态。
-
-【场制】：根据 teamData 人数自适应（16人为8人制，22人为11人制）。
-【坐标系】：x[0-1000], y[0-650]。红队从左向右进攻。
-
-【当前战术需求】：${customSkill || "执行流畅的整体进攻"}
+【当前战术需求】：${customSkill || "执行连续的团队配合进攻"}
 【实时球员数据】：${JSON.stringify(teamData)}`;
 
         const stream = await client.chat.completions.create({
@@ -120,7 +112,7 @@ app.post('/api/deepseek', async (req, res) => {
             if (toolCall?.function?.arguments) {
                 fullArguments += toolCall.function.arguments;
                 if (fullArguments.length % 120 === 0) { 
-                    res.write(`data: ${JSON.stringify({ stage: "⚽ 正在计算球员跑位与球速同步..." })}\n\n`);
+                    res.write(`data: ${JSON.stringify({ stage: "⚽ 正在严谨校对每一步传跑时序..." })}\n\n`);
                 }
             }
         }
@@ -135,7 +127,7 @@ app.post('/api/deepseek', async (req, res) => {
                 tactical_actions: args.tactical_actions
             })}\n\n`);
         } catch (e) {
-            res.write(`data: ${JSON.stringify({ error: "战术逻辑计算超载，请简化指令。" })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: "战术序列解析失败，请检查指令复杂度。" })}\n\n`);
         }
         res.end();
     } catch (error) {
@@ -146,5 +138,5 @@ app.post('/api/deepseek', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 真实动感战术引擎已启动！端口: ${PORT}`);
+    console.log(`🚀 真实动感推演版已启动！端口: ${PORT}`);
 });
