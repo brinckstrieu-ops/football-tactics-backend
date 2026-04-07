@@ -17,11 +17,11 @@ const tools = [{
     type: "function",
     function: {
         name: "generate_smart_formation",
-        description: "按时序拆解足球战术：包含接球跑位、传球链路与射门动作",
+        description: "复现真实足球战术：包含红队进攻链路与蓝队防守牵引位移",
         parameters: {
             type: "object",
             properties: {
-                logic: { type: "string", description: "战术步骤描述（如：步骤1...步骤2...）" },
+                logic: { type: "string", description: "战术逻辑：需描述红队如何诱导及蓝队防线的错误移动" },
                 updated_stats: {
                     type: "array",
                     items: {
@@ -39,12 +39,14 @@ const tools = [{
                         }
                     }
                 },
+                // 🌟 关键：这里的 positions 必须包含红蓝两队的变动坐标
                 positions: { 
                     type: "array", 
                     items: {
                         type: "object",
                         properties: {
                             label: { type: "string" },
+                            team: { type: "string", enum: ["red", "blue"] },
                             x: { type: "number" },
                             y: { type: "number" }
                         }
@@ -52,15 +54,15 @@ const tools = [{
                 },
                 tactical_actions: {
                     type: "array",
-                    description: "必须严格按发生顺序排列的交互链",
+                    description: "按执行顺序排列的进攻动作",
                     items: {
                         type: "object",
                         properties: {
                             type: { type: "string", enum: ["pass", "shot"] },
                             fromLabel: { type: "string" },
-                            toLabel: { type: "string", description: "接收者编号" },
-                            targetX: { type: "number", description: "目标落点X" },
-                            targetY: { type: "number", description: "目标落点Y" }
+                            toLabel: { type: "string" },
+                            targetX: { type: "number" },
+                            targetY: { type: "number" }
                         },
                         required: ["type", "fromLabel"]
                     }
@@ -79,24 +81,27 @@ app.post('/api/deepseek', async (req, res) => {
     try {
         const { teamData, customSkill } = req.body; 
 
-        // 🌟 核心升级：增加【时序严格对齐协议】
-        const baseSystemPrompt = `你是一个专业的足球战术动态推演引擎。
-你的任务是策划一组具有【真实动感】且【逻辑闭环】的进攻流程。
+        // 🌟 核心升级：增加【防守牵引与空挡复现协议】
+        const baseSystemPrompt = `你是一个顶级的足球战术复盘引擎，专注于展示“进攻诱导”与“防守偏移”的博弈过程。
 
-【核心协议：时序严格对齐】：
-1. 步骤一一对应：你在 logic 中描述的“步骤 N”，必须在 tactical_actions 数组中对应索引为 N-1 的动作。严禁 logic 写了 6 步而 actions 只有 5 个。
-2. 动作补全：如果战术从 4 号发起，必须在 tactical_actions 中产生第一个 type: "pass" 动作（fromLabel: "4"）。
-3. 动态接球：
-   - 每一个 "pass" 动作的 toLabel 球员，其在 positions 数组中的坐标必须是该球员去接球的目标点。
-   - 传球线 targetX/Y 必须指向接球手在 positions 中的位置。
-4. 真实性：8人制足球场较小 (1000x650)，球员跑位不应瞬间跨越 500 单位，除非其 PAC 极高。
+【核心协议：防守牵引模拟】：
+1. 蓝队动态响应：你必须在 positions 数组中更新蓝队球员的坐标。
+2. 牵引逻辑：
+   - 当红队爆点(如7号)带球或高速前插时，蓝队对应的后卫(如蓝2、蓝5)必须向其位置靠拢，执行“双人包夹”或“重心偏移”。
+   - 这种偏移必须导致蓝队防线的另一侧或中路出现巨大的视觉空档。
+3. 空间复现：在执行 tactical_actions 的射门动作前，蓝队的中卫位置应被诱导离开球门正面区域。
+4. 守门员约束：严禁移动红1和蓝1，除非是射门扑救动作。
 
-【特质映射】：
-- PAC(速度)表现：高 PAC 球员安排大幅度纵向跑位接球。
-- PAS(传球)表现：高 PAS 球员作为中转枢纽，线段应穿透对方防线。
+【步骤严格对齐】：
+- 每一个进攻动作(pass/shot)都必须伴随着蓝队整体阵型的同步收缩或拉伸。
+- logic 字段必须明确指出：“蓝队后卫因防守压力向X路倾斜，导致Y路空档完全暴露”。
 
-【当前战术需求】：${customSkill || "执行连续的团队配合进攻"}
-【实时球员数据】：${JSON.stringify(teamData)}`;
+【场制与坐标】：
+- 红色左攻右。蓝队球员编号应对应其防守位置。
+- 8人制球场(1000x650)，利用空间拉开幅度，展示蓝队防守的无力感。
+
+【当前战术需求】：${customSkill || "展示一次经典的调虎离山配合进攻"}
+【实时红蓝数据】：${JSON.stringify(teamData)}`;
 
         const stream = await client.chat.completions.create({
             model: "deepseek-chat", 
@@ -112,7 +117,7 @@ app.post('/api/deepseek', async (req, res) => {
             if (toolCall?.function?.arguments) {
                 fullArguments += toolCall.function.arguments;
                 if (fullArguments.length % 120 === 0) { 
-                    res.write(`data: ${JSON.stringify({ stage: "⚽ 正在严谨校对每一步传跑时序..." })}\n\n`);
+                    res.write(`data: ${JSON.stringify({ stage: "⚽ 正在模拟防线牵引轨迹..." })}\n\n`);
                 }
             }
         }
@@ -127,7 +132,7 @@ app.post('/api/deepseek', async (req, res) => {
                 tactical_actions: args.tactical_actions
             })}\n\n`);
         } catch (e) {
-            res.write(`data: ${JSON.stringify({ error: "战术序列解析失败，请检查指令复杂度。" })}\n\n`);
+            res.write(`data: ${JSON.stringify({ error: "战术引擎解析逻辑冲突，请尝试简化指令。" })}\n\n`);
         }
         res.end();
     } catch (error) {
@@ -138,5 +143,5 @@ app.post('/api/deepseek', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 真实动感推演版已启动！端口: ${PORT}`);
+    console.log(`🚀 真实博弈战术引擎已启动！端口: ${PORT}`);
 });
