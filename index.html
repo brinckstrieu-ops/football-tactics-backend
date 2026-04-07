@@ -29,17 +29,17 @@
 </head>
 <body>
 
-<header><h1>Tactical Pro v3.6</h1></header>
+<header><h1>Tactical Pro v3.8</h1></header>
 
 <div class="main-layout">
     <div class="canvas-container"><canvas id="tacticsCanvas" width="1000" height="650"></canvas></div>
     <div class="side-panel">
         <div class="control-card">
             <div class="header-row">
-                <h4>🧠 真实博弈沙盘</h4>
+                <h4>🧠 攻防博弈演播厅</h4>
                 <button id="voiceBtn" style="min-height: 30px; padding: 0 10px; background: var(--neon-blue); color: #000; font-size: 10px;">🎤 语音</button>
             </div>
-            <textarea id="skillConfig" placeholder="指令：10号身后球找7号，7号拉边诱敌后回传9号射门..."></textarea>
+            <textarea id="skillConfig" placeholder="指令：让7号带走蓝队防线，随后回传9号..."></textarea>
         </div>
         <div class="control-card">
             <div class="button-grid">
@@ -53,7 +53,7 @@
             </div>
         </div>
         <div class="control-card analysis-card" id="analysisPanel">
-            <div id="analysisText" style="font-size: 12px; line-height: 1.6; color: #fff; font-family: 'Consolas', monospace; white-space: pre-wrap;">等待战术指令...</div>
+            <div id="analysisText" style="font-size: 12px; line-height: 1.6; color: #fff; font-family: 'Consolas', monospace; white-space: pre-wrap;">AI 系统待命...</div>
         </div>
     </div>
 </div>
@@ -122,11 +122,13 @@
         ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.fillText(p.label, p.x, p.y + 6);
     }
 
-    // 🌟 核心升级：全员诱导同步动画引擎
-    function animateGameFlow(stepPositions) {
+    // 🌟 核心引擎升级：监听 step_positions 的红蓝同步位移
+    function animateGameStep(stepPositions) {
         return new Promise(resolve => {
+            if (!stepPositions || stepPositions.length === 0) return resolve();
+            
             const startTime = performance.now(), duration = 1000;
-            // 记录所有涉及球员的初始位置
+            // 找出所有在这一步需要动的人（红队或蓝队）
             const movers = stepPositions.map(target => {
                 const p = players.find(player => String(player.label) === String(target.label) && player.team === target.team);
                 return p ? { p, startX: p.x, startY: p.y, tx: target.x, ty: target.y } : null;
@@ -150,39 +152,38 @@
 
     async function runTacticsStepByStep(data, textDiv, btn) {
         try {
-            textDiv.innerText = `[AI 博弈演示开始]\n${data.analysis}\n-------------------`;
+            textDiv.innerText = `[AI 动态博弈演示]\n${data.analysis}\n-------------------`;
             lines = [];
 
             if (data.tactical_actions && data.tactical_actions.length > 0) {
                 for (let i = 0; i < data.tactical_actions.length; i++) {
                     const act = data.tactical_actions[i];
-                    textDiv.innerText += `\n>> 执行步骤 ${i+1}: 正在复现攻防博弈...`;
+                    textDiv.innerText += `\n>> 执行步骤 ${i+1}: 正在模拟博弈位移...`;
 
-                    // 1. 获取当前步骤对应的所有红蓝球员位移（后端 positions 应包含红蓝队信息）
-                    // 我们假设后端在每一个 Action 周期都给出了当时全员的预期坐标
-                    await animateGameFlow(data.new_player_data);
+                    // 1. 同步所有球员到位位（包括蓝队被牵引的轨迹）
+                    if (act.step_positions) {
+                        await animateGameStep(act.step_positions);
+                    }
 
-                    // 2. 绘制动作连线
+                    // 2. 位移结束后，绘制当前动作连线
                     const fromPlayer = players.find(p => String(p.label) === String(act.fromLabel) && p.team === 'red');
-                    const fromIdx = players.indexOf(fromPlayer);
-
                     if (act.type === 'pass') {
                         const toPlayer = players.find(p => String(p.label) === String(act.toLabel) && p.team === 'red');
                         if (fromPlayer && toPlayer) {
-                            lines.push({ fromIdx, toIdx: players.indexOf(toPlayer), isShot: false });
+                            lines.push({ fromIdx: players.indexOf(fromPlayer), toIdx: players.indexOf(toPlayer), isShot: false });
                         }
                     } else if (act.type === 'shot') {
                         if (fromPlayer) {
-                            lines.push({ fromIdx, isShot: true, targetX: act.targetX || 1000, targetY: act.targetY || 325 });
+                            lines.push({ fromIdx: players.indexOf(fromPlayer), isShot: true, targetX: act.targetX || 1000, targetY: act.targetY || 325 });
                         }
                     }
                     drawCanvas();
                     await sleep(800); 
                 }
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("演播异常:", e); }
         finally {
-            textDiv.innerText += "\n>> 博弈演示圆满完成。";
+            textDiv.innerText += "\n>> 推演圆满完成。";
             isAiPlaying = false; btn.disabled = false;
         }
     }
@@ -192,11 +193,10 @@
         isAiPlaying = true;
         const btn = document.getElementById('analyzeAiBtn'), textDiv = document.getElementById('analysisText');
         btn.disabled = true; document.getElementById('analysisPanel').classList.add('show');
-        textDiv.innerText = ">> AI 正在模拟防线牵引轨迹...";
+        textDiv.innerText = ">> AI 正在精算防线牵引轨迹...";
 
-        // 统一发送红蓝双方位置给 AI
         const teamData = players.map(p => ({
-            label: p.label, team: p.team, // 'red' 或 'blue'
+            label: p.label, team: p.team,
             x: Math.round(p.x), y: Math.round(p.y),
             stats: { pac: p.ability.v1, sho: p.ability.v2, pas: p.ability.v3, dri: p.ability.v4, def: p.ability.v5, phy: p.ability.v6 }
         }));
@@ -230,7 +230,7 @@
         }
     }
 
-    // 交互逻辑 (保持之前的优化版本)
+    // 交互逻辑
     canvas.addEventListener('pointerdown', (e) => {
         if (isAiPlaying) return;
         const rect = canvas.getBoundingClientRect();
@@ -253,6 +253,13 @@
         drawCanvas();
     });
     canvas.addEventListener('pointerup', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (width / rect.width), y = (e.clientY - rect.top) * (height / rect.height);
+        if (interactionMode === 'draw' && drawingStartPlayer !== null) {
+            const endIdx = players.findIndex(p => Math.hypot(p.x-x, p.y-y) < 45);
+            if (endIdx !== -1 && endIdx !== drawingStartPlayer) lines.push({ fromIdx: drawingStartPlayer, toIdx: endIdx, isShot: false });
+            else lines.push({ fromIdx: drawingStartPlayer, targetX: x, targetY: y, isShot: true });
+        }
         drawingStartPlayer = null; isDragging = false; draggedPlayerIndex = -1; drawCanvas();
     });
 
