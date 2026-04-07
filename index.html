@@ -39,8 +39,7 @@
     <div class="side-panel">
         <div class="control-card">
             <h4 style="color:var(--accent-gold); margin:0 0 5px 0;">🧪 战术实验室 (Skill 配置)</h4>
-            <p style="font-size:10px; color:#888; margin-bottom:5px;">输入战术脚本，Agent 将自动修改数值并演示动态路线：</p>
-            <textarea id="skillConfig" placeholder="例如：&#10;7号梅西式边锋，内切后传给9号，9号转身打门左上角。"></textarea>
+            <textarea id="skillConfig" placeholder="例如：7号梅西式边锋，内切后传给9号..."></textarea>
         </div>
         <div class="control-card">
             <div class="button-grid">
@@ -66,12 +65,12 @@
         <h3 id="modalTitle" style="margin:0 0 10px 0; text-align:center; color:var(--accent-gold);">球员设定</h3>
         <div style="margin-bottom:12px;"><label style="font-size:12px; color:#aaa;">号码：</label><input type="number" id="numInput" style="width:100%; background:#333; color:#fff; border:1px solid #444; padding:8px; border-radius:6px;"></div>
         <div class="ability-grid" id="abilityGrid">
-            <div class="ability-item"><label id="l1"></label><input type="number" id="v1"></div>
-            <div class="ability-item"><label id="l2"></label><input type="number" id="v2"></div>
-            <div class="ability-item"><label id="l3"></label><input type="number" id="v3"></div>
-            <div class="ability-item"><label id="l4"></label><input type="number" id="v4"></div>
-            <div class="ability-item"><label id="l5"></label><input type="number" id="v5"></div>
-            <div class="ability-item"><label id="l6"></label><input type="number" id="v6"></div>
+            <div class="ability-item"><label>速度 (PAC)</label><input type="number" id="v1"></div>
+            <div class="ability-item"><label>射门 (SHO)</label><input type="number" id="v2"></div>
+            <div class="ability-item"><label>传球 (PAS)</label><input type="number" id="v3"></div>
+            <div class="ability-item"><label>盘带 (DRI)</label><input type="number" id="v4"></div>
+            <div class="ability-item"><label>防守 (DEF)</label><input type="number" id="v5"></div>
+            <div class="ability-item"><label>体能 (PHY)</label><input type="number" id="v6"></div>
         </div>
         <div style="display: flex; gap: 10px; margin-top: 20px;">
             <button id="saveAbilityBtn" style="flex:1; background:var(--accent-gold); color:#000; font-weight:bold;">确定</button>
@@ -88,9 +87,6 @@
     let dragOffsetX = 0, dragOffsetY = 0, currentEditPlayerIndex = -1;
     let lastTapTime = 0, lastTapPlayerIdx = -1;
     let isAiPlaying = false; 
-
-    const outfieldLabels = ["速度 (PAC)", "射门 (SHO)", "传球 (PAS)", "盘带 (DRI)", "防守 (DEF)", "体能 (PHY)"];
-    const gkLabels = ["鱼跃 (DIV)", "手控 (HAN)", "开球 (KIC)", "反应 (REF)", "出击 (SPD)", "站位 (POS)"];
 
     function getDefaultAbility() { return { v1: 75, v2: 70, v3: 72, v4: 74, v5: 65, v6: 70 }; }
 
@@ -133,42 +129,29 @@
             ctx.fillStyle = p.team === 'red' ? '#ff5252' : '#448aff';
             ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
             ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center'; ctx.fillText(p.label, p.x, p.y + 7);
-            const ovr = Math.round((p.ability.v1 + p.ability.v2 + p.ability.v3 + p.ability.v4 + p.ability.v5 + p.ability.v6) / 6);
-            ctx.font = '10px Arial'; ctx.fillText(`OVR:${ovr}`, p.x, p.y + 38);
         });
     }
 
-    // 🌟 已更新：包含坐标兜底与安全边界逻辑
     function animatePlayersTo(newPositions, onComplete) {
         const startTime = performance.now();
         const duration = 1200;
         const startPositions = players.map(p => ({ x: p.x, y: p.y }));
-
         function step(now) {
             const progress = Math.min((now - startTime) / duration, 1);
             const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
             newPositions.forEach(target => {
-                // 使用 String 强制匹配 Label，防止类型冲突
                 const pIndex = players.findIndex(player => String(player.label) === String(target.label) && player.team === 'red');
                 if (pIndex !== -1) {
                     const start = startPositions[pIndex];
-                    
-                    // 🌟 核心修复：强制坐标落在草坪范围内 [50-950, 50-600]，留出安全边界防止球员“出界”
                     const safeX = Math.max(50, Math.min(950, target.x));
                     const safeY = Math.max(50, Math.min(600, target.y));
-                    
                     players[pIndex].x = start.x + (safeX - start.x) * ease;
                     players[pIndex].y = start.y + (safeY - start.y) * ease;
                 }
             });
-
             drawCanvas();
-            if (progress < 1) {
-                requestAnimationFrame(step);
-            } else if (onComplete) {
-                onComplete();
-            }
+            if (progress < 1) requestAnimationFrame(step);
+            else if (onComplete) onComplete();
         }
         requestAnimationFrame(step);
     }
@@ -182,67 +165,81 @@
         btn.disabled = true;
         isAiPlaying = true;
         document.getElementById('analysisPanel').classList.add('show');
+        textDiv.innerText = "🚀 正在初始化战术引擎...";
 
-        const stages = ["🔍 正在连接 DeepSeek 大脑...", "🌐 正在同步 2026 联网情报...", "⚽ 正在计算球员数值最优解...", "🏃 正在规划动态演练路径..."];
-        let currentStage = 0;
-        textDiv.innerText = stages[0];
-        const loadingInterval = setInterval(() => {
-            currentStage++;
-            textDiv.innerText = stages[currentStage % stages.length];
-        }, 3000);
-
+        // 🌟 核心：构造完整的 teamData，包含坐标和属性
         const teamData = players.map(p => ({
-            label: p.label, team: p.team === 'red' ? '红' : '蓝',
+            label: p.label,
+            team: p.team === 'red' ? '红' : '蓝',
+            x: Math.round(p.x),
+            y: Math.round(p.y),
             role: getRole(p.x, p.team),
-            stats: { pac: p.ability.v1, sho: p.ability.v2, pas: p.ability.v3, dri: p.ability.v4, def: p.ability.v5, phy: p.ability.v6 }
+            stats: { 
+                pac: p.ability.v1, sho: p.ability.v2, pas: p.ability.v3, 
+                dri: p.ability.v4, def: p.ability.v5, phy: p.ability.v6 
+            }
         }));
 
         try {
             const response = await fetch('https://soccer-api-u8yn.onrender.com/api/deepseek', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messages: [{ role: 'user', content: '执行演示' }], teamData, customSkill: skillContent })
+                body: JSON.stringify({ teamData, customSkill: skillContent })
             });
-            const data = await response.json();
-            clearInterval(loadingInterval);
 
-            if (data.execute_action === "UPDATE_PLAYERS") {
-                if (data.updated_stats) {
-                    data.updated_stats.forEach(item => {
-                        const p = players.find(player => String(player.label) === String(item.label) && player.team === 'red');
-                        if (p) Object.assign(p.ability, { v1: item.stats.pac, v2: item.stats.sho, v3: item.stats.pas, v4: item.stats.dri, v5: item.stats.def, v6: item.stats.phy });
-                    });
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.stage) textDiv.innerText = data.stage;
+                            if (data.final) handleFinalAction(data, textDiv, btn);
+                        } catch (e) {}
+                    }
                 }
-                
-                textDiv.innerText = `【AI 指导方案】\n${data.analysis || "部署完毕。"}`;
-                lines = []; drawCanvas();
-
-                animatePlayersTo(data.new_player_data, () => {
-                    if (data.tactical_actions && data.tactical_actions.length > 0) {
-                        data.tactical_actions.forEach((act, index) => {
-                            setTimeout(() => {
-                                const fIdx = players.findIndex(p => String(p.label) === String(act.fromLabel) && p.team === 'red');
-                                if (act.type === 'pass') {
-                                    const tIdx = players.findIndex(p => String(p.label) === String(act.toLabel) && p.team === 'red');
-                                    if (fIdx !== -1 && tIdx !== -1) lines.push({ fromIdx: fIdx, toIdx: tIdx, isShot: false });
-                                } else if (act.type === 'shot') {
-                                    if (fIdx !== -1) lines.push({ fromIdx: fIdx, isShot: true, targetX: act.targetX, targetY: act.targetY });
-                                }
-                                drawCanvas();
-                                if (index === data.tactical_actions.length - 1) { isAiPlaying = false; btn.disabled = false; }
-                            }, index * 600);
-                        });
-                    } else { isAiPlaying = false; btn.disabled = false; }
-                });
-            } else {
-                isAiPlaying = false; btn.disabled = false;
-                textDiv.innerText = "AI 仅返回文字分析，未触发动作。";
             }
         } catch (err) {
-            clearInterval(loadingInterval);
+            textDiv.innerText = "❌ 失败: " + err.message;
             isAiPlaying = false; btn.disabled = false;
-            textDiv.innerText = "❌ 连接失败";
         }
+    }
+
+    function handleFinalAction(data, textDiv, btn) {
+        if (data.updated_stats) {
+            data.updated_stats.forEach(item => {
+                const p = players.find(player => String(player.label) === String(item.label) && player.team === 'red');
+                if (p) Object.assign(p.ability, { v1: item.stats.pac, v2: item.stats.sho, v3: item.stats.pas, v4: item.stats.dri, v5: item.stats.def, v6: item.stats.phy });
+            });
+        }
+        textDiv.innerText = `【AI 指导】\n${data.analysis}`;
+        lines = [];
+        animatePlayersTo(data.new_player_data, () => {
+            if (data.tactical_actions && data.tactical_actions.length > 0) {
+                data.tactical_actions.forEach((act, idx) => {
+                    setTimeout(() => {
+                        const fIdx = players.findIndex(p => String(p.label) === String(act.fromLabel) && p.team === 'red');
+                        if (act.type === 'pass') {
+                            const tIdx = players.findIndex(p => String(p.label) === String(act.toLabel) && p.team === 'red');
+                            if (fIdx !== -1 && tIdx !== -1) lines.push({ fromIdx: fIdx, toIdx: tIdx, isShot: false });
+                        } else if (act.type === 'shot') {
+                            if (fIdx !== -1) lines.push({ fromIdx: fIdx, isShot: true, targetX: act.targetX, targetY: act.targetY });
+                        }
+                        drawCanvas();
+                        if (idx === data.tactical_actions.length - 1) { isAiPlaying = false; btn.disabled = false; }
+                    }, idx * 600);
+                });
+            } else { isAiPlaying = false; btn.disabled = false; }
+        });
     }
 
     canvas.onmousedown = canvas.ontouchstart = (e) => {
@@ -251,23 +248,20 @@
         const cx = (e.touches ? e.touches[0].clientX : e.clientX), cy = (e.touches ? e.touches[0].clientY : e.clientY);
         const x = (cx - rect.left) * (width / rect.width), y = (cy - rect.top) * (height / rect.height);
         const idx = players.findIndex(p => Math.hypot(p.x-x, p.y-y) < 30);
+        
         if (idx !== -1 && (Date.now() - lastTapTime < 300) && lastTapPlayerIdx === idx) {
             currentEditPlayerIndex = idx;
-            const p = players[idx], role = getRole(p.x, p.team), labels = role === 'GK' ? gkLabels : outfieldLabels;
-            document.getElementById('modalTitle').innerText = role === 'GK' ? "门将设定" : "球员设定";
+            const p = players[idx];
             document.getElementById('numInput').value = p.label;
-            for(let i=1; i<=6; i++) { 
-                const labelElem = document.getElementById('l'+i);
-                if(labelElem) labelElem.innerText = labels[i-1];
-                const inputElem = document.getElementById('v'+i);
-                if(inputElem) inputElem.value = p.ability['v'+i];
-            }
+            // 🌟 填充 Modal 的初始数值
+            for(let i=1; i<=6; i++) document.getElementById('v'+i).value = p.ability['v'+i];
             document.getElementById('abilityModal').style.display = 'flex';
             return;
         }
         lastTapTime = Date.now(); lastTapPlayerIdx = idx;
-        if (dragMode && idx !== -1) { isDragging = true; draggedPlayerIndex = idx; dragOffsetX = x - players[idx].x; dragOffsetY = y - players[idx].y; }
+        if (idx !== -1) { isDragging = true; draggedPlayerIndex = idx; dragOffsetX = x - players[idx].x; dragOffsetY = y - players[idx].y; }
     };
+
     window.onmousemove = window.ontouchmove = (e) => {
         if (!isDragging || isAiPlaying) return;
         const rect = canvas.getBoundingClientRect();
@@ -276,23 +270,20 @@
         players[draggedPlayerIndex].y = (cy - rect.top) * (height / rect.height) - dragOffsetY;
         drawCanvas();
     };
+
     window.onmouseup = window.ontouchend = () => isDragging = false;
+
     document.getElementById('saveAbilityBtn').onclick = () => {
         const p = players[currentEditPlayerIndex];
         p.label = document.getElementById('numInput').value;
-        for(let i=1; i<=6; i++) {
-            const inputElem = document.getElementById('v'+i);
-            if(inputElem) p.ability['v'+i] = +inputElem.value;
-        }
-        document.getElementById('abilityModal').style.display = 'none'; drawCanvas();
+        // 🌟 保存修改后的六维属性
+        for(let i=1; i<=6; i++) p.ability['v'+i] = parseInt(document.getElementById('v'+i).value);
+        document.getElementById('abilityModal').style.display = 'none'; 
+        drawCanvas();
     };
     document.getElementById('cancelAbilityBtn').onclick = () => document.getElementById('abilityModal').style.display = 'none';
-    document.getElementById('resetBtn').onclick = () => { players = getDefaultPlayers(); lines = []; drawCanvas(); };
     document.getElementById('analyzeAiBtn').onclick = analyzeWithAI;
-    document.getElementById('dragModeBtn').onclick = () => { dragMode=true; document.getElementById('dragModeBtn').classList.add('mode-active'); document.getElementById('lineModeBtn').classList.remove('mode-active'); };
-    document.getElementById('lineModeBtn').onclick = () => { dragMode=false; document.getElementById('lineModeBtn').classList.add('mode-active'); document.getElementById('dragModeBtn').classList.remove('mode-active'); };
-    document.getElementById('clearLinesBtn').onclick = () => { lines = []; drawCanvas(); };
-    document.getElementById('closeAnalysisBtn').onclick = () => document.getElementById('analysisPanel').classList.remove('show');
+    document.getElementById('resetBtn').onclick = () => { players = getDefaultPlayers(); lines = []; drawCanvas(); };
     players = getDefaultPlayers(); drawCanvas();
 })();
 </script>
