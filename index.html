@@ -87,7 +87,7 @@
     let players = [], lines = [], dragMode = true, isDragging = false, draggedPlayerIndex = -1;
     let dragOffsetX = 0, dragOffsetY = 0, currentEditPlayerIndex = -1;
     let lastTapTime = 0, lastTapPlayerIdx = -1;
-    let isAiPlaying = false; // 🌟 演示锁
+    let isAiPlaying = false; 
 
     const outfieldLabels = ["速度 (PAC)", "射门 (SHO)", "传球 (PAS)", "盘带 (DRI)", "防守 (DEF)", "体能 (PHY)"];
     const gkLabels = ["鱼跃 (DIV)", "手控 (HAN)", "开球 (KIC)", "反应 (REF)", "出击 (SPD)", "站位 (POS)"];
@@ -138,24 +138,37 @@
         });
     }
 
+    // 🌟 已更新：包含坐标兜底与安全边界逻辑
     function animatePlayersTo(newPositions, onComplete) {
         const startTime = performance.now();
         const duration = 1200;
         const startPositions = players.map(p => ({ x: p.x, y: p.y }));
+
         function step(now) {
             const progress = Math.min((now - startTime) / duration, 1);
             const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
             newPositions.forEach(target => {
+                // 使用 String 强制匹配 Label，防止类型冲突
                 const pIndex = players.findIndex(player => String(player.label) === String(target.label) && player.team === 'red');
                 if (pIndex !== -1) {
                     const start = startPositions[pIndex];
-                    players[pIndex].x = start.x + (target.x - start.x) * ease;
-                    players[pIndex].y = start.y + (target.y - start.y) * ease;
+                    
+                    // 🌟 核心修复：强制坐标落在草坪范围内 [50-950, 50-600]，留出安全边界防止球员“出界”
+                    const safeX = Math.max(50, Math.min(950, target.x));
+                    const safeY = Math.max(50, Math.min(600, target.y));
+                    
+                    players[pIndex].x = start.x + (safeX - start.x) * ease;
+                    players[pIndex].y = start.y + (safeY - start.y) * ease;
                 }
             });
+
             drawCanvas();
-            if (progress < 1) requestAnimationFrame(step);
-            else if (onComplete) onComplete();
+            if (progress < 1) {
+                requestAnimationFrame(step);
+            } else if (onComplete) {
+                onComplete();
+            }
         }
         requestAnimationFrame(step);
     }
@@ -170,7 +183,6 @@
         isAiPlaying = true;
         document.getElementById('analysisPanel').classList.add('show');
 
-        // 🌟 加载阶段逻辑
         const stages = ["🔍 正在连接 DeepSeek 大脑...", "🌐 正在同步 2026 联网情报...", "⚽ 正在计算球员数值最优解...", "🏃 正在规划动态演练路径..."];
         let currentStage = 0;
         textDiv.innerText = stages[0];
@@ -195,7 +207,6 @@
             clearInterval(loadingInterval);
 
             if (data.execute_action === "UPDATE_PLAYERS") {
-                // 1. 同步数值
                 if (data.updated_stats) {
                     data.updated_stats.forEach(item => {
                         const p = players.find(player => String(player.label) === String(item.label) && player.team === 'red');
@@ -206,7 +217,6 @@
                 textDiv.innerText = `【AI 指导方案】\n${data.analysis || "部署完毕。"}`;
                 lines = []; drawCanvas();
 
-                // 2. 位移与演示
                 animatePlayersTo(data.new_player_data, () => {
                     if (data.tactical_actions && data.tactical_actions.length > 0) {
                         data.tactical_actions.forEach((act, index) => {
