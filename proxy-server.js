@@ -1,148 +1,232 @@
-const express = require('express');
-const cors = require('cors');
-const { OpenAI } = require('openai');
-const axios = require('axios');
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AI 足球战术大师 - 动态演示版</title>
+    <style>
+        :root { --pitch-green: #2e7d32; --panel-bg: rgba(10, 47, 31, 0.98); --accent-gold: #ff9800; --text-main: #f5f5f5; --shot-red: #ff1744; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { background: #121212; margin: 0; padding: 10px; font-family: 'PingFang SC', sans-serif; color: var(--text-main); overflow-y: auto; }
+        header h1 { text-align: center; font-size: 18px; background: linear-gradient(to right, #fff, var(--accent-gold)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 5px 0; }
+        .main-layout { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 1400px; margin: 0 auto; }
+        .canvas-container { position: relative; background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 2px solid #333; width: 100%; aspect-ratio: 1000 / 650; touch-action: none; }
+        canvas { display: block; width: 100%; height: 100%; background: var(--pitch-green); }
+        .side-panel { display: flex; flex-direction: column; gap: 10px; }
+        .control-card { background: var(--panel-bg); border-radius: 12px; padding: 12px; border: 1px solid rgba(255,255,255,0.1); }
+        .button-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        @media (max-width: 600px) { .button-grid { grid-template-columns: repeat(2, 1fr); } }
+        button { background: #263238; border: 1px solid #444; color: white; padding: 10px 2px; border-radius: 8px; cursor: pointer; font-size: 11px; transition: 0.2s; border: none; }
+        button.mode-active { background: var(--accent-gold); color: #000; font-weight: bold; }
+        #analyzeAiBtn { grid-column: span 2; background: linear-gradient(135deg, #ff9800, #f57c00); color: #000; font-weight: bold; }
+        .analysis-card { display: none; background: #051a12; border: 1px solid var(--accent-gold); margin-top: 10px; padding: 12px; border-radius: 12px; max-height: 400px; overflow-y: auto; }
+        .analysis-card.show { display: block; }
+        #skillConfig { width: 100%; height: 100px; background: #121212; color: #00ff00; border: 1px solid #444; border-radius: 8px; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px; resize: none; margin-top: 5px; outline: none; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 2000; justify-content: center; align-items: center; }
+        .modal-content { background: #1e1e1e; padding: 20px; border-radius: 16px; width: 90%; max-width: 340px; border: 1px solid var(--accent-gold); }
+        .ability-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+        .ability-item { display: flex; flex-direction: column; }
+        .ability-item label { font-size: 10px; color: #aaa; margin-bottom: 2px; }
+        .ability-item input { background: #333; border: 1px solid #444; color: var(--accent-gold); padding: 8px; border-radius: 6px; text-align: center; }
+    </style>
+</head>
+<body>
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+<header><h1>FOOTBALL TACTICS PRO (Tactical Demo)</h1></header>
 
-// 1. 基础中间件
-app.use(cors());
-app.use(express.json());
+<div class="main-layout">
+    <div class="canvas-container"><canvas id="tacticsCanvas" width="1000" height="650"></canvas></div>
+    <div class="side-panel">
+        <div class="control-card">
+            <h4 style="color:var(--accent-gold); margin:0 0 5px 0;">🧪 战术实验室 (Skill 配置)</h4>
+            <textarea id="skillConfig" placeholder="输入战术描述..."></textarea>
+        </div>
+        <div class="control-card">
+            <div class="button-grid">
+                <button id="dragModeBtn" class="mode-active">🎮 移动球员</button>
+                <button id="lineModeBtn">✏️ 画线/打门</button>
+                <button id="resetBtn">🔄 重置阵型</button>
+                <button id="analyzeAiBtn">🤖 运行动态演示</button>
+                <button id="clearLinesBtn">🗑️ 清空连线</button>
+            </div>
+        </div>
+        <div class="control-card analysis-card" id="analysisPanel">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4 style="margin:0; font-size:16px; color:var(--accent-gold);">🧠 AI 实时推演报告</h4>
+                <span id="closeAnalysisBtn" style="cursor:pointer; padding:5px;">✖</span>
+            </div>
+            <div id="analysisText" style="font-size: 13px; line-height: 1.6; white-space: pre-wrap;">准备就绪...</div>
+        </div>
+    </div>
+</div>
 
-// 2. 初始化 DeepSeek 客户端
-const client = new OpenAI({
-    baseURL: 'https://api.deepseek.com',
-    apiKey: process.env.DEEPSEEK_API_KEY 
-});
+<script>
+(function(){
+    const canvas = document.getElementById('tacticsCanvas'), ctx = canvas.getContext('2d');
+    const width = 1000, height = 650;
+    let players = [], lines = [], dragMode = true, isDragging = false, draggedPlayerIndex = -1;
+    let dragOffsetX = 0, dragOffsetY = 0, currentEditPlayerIndex = -1;
+    let lastTapTime = 0, lastTapPlayerIdx = -1;
+    let isAiPlaying = false; 
 
-// 3. 核心工具定义
-const tools = [{
-    type: "function",
-    function: {
-        name: "generate_smart_formation",
-        description: "分析足球战术需求，自动配置数值、移动棋子并规划具体的传球路径与射门坐标",
-        parameters: {
-            type: "object",
-            properties: {
-                logic: { type: "string", description: "战术逻辑详细描述" },
-                updated_stats: {
-                    type: "array",
-                    items: {
-                        type: "object",
-                        properties: {
-                            label: { type: "string" },
-                            stats: { 
-                                type: "object", 
-                                properties: {
-                                    pac: { type: "number" }, sho: { type: "number" },
-                                    pas: { type: "number" }, dri: { type: "number" },
-                                    def: { type: "number" }, phy: { type: "number" }
-                                }
-                            }
-                        }
-                    }
-                },
-                positions: { 
-                    type: "array", 
-                    items: {
-                        type: "object",
-                        properties: {
-                            label: { type: "string" },
-                            x: { type: "number" },
-                            y: { type: "number" }
-                        }
-                    }
-                },
-                tactical_actions: {
-                    type: "array",
-                    items: {
-                        type: "object",
-                        properties: {
-                            type: { type: "string", enum: ["pass", "shot"] },
-                            fromLabel: { type: "string" },
-                            toLabel: { type: "string" },
-                            targetX: { type: "number" },
-                            targetY: { type: "number" }
-                        },
-                        required: ["type", "fromLabel"]
+    function getDefaultAbility() { return { v1: 75, v2: 70, v3: 72, v4: 74, v5: 65, v6: 70 }; }
+
+    function getDefaultPlayers() {
+        const list = [];
+        let redPos = [{x:80,y:325},{x:220,y:150},{x:220,y:325},{x:220,y:500},{x:400,y:100},{x:400,y:250},{x:400,y:400},{x:400,y:550},{x:650,y:150},{x:650,y:325},{x:650,y:500}];
+        let bluePos = [{x:920,y:325},{x:780,y:150},{x:780,y:325},{x:780,y:500},{x:600,y:100},{x:600,y:250},{x:600,y:400},{x:600,y:550},{x:350,y:150},{x:350,y:325},{x:350,y:500}];
+        redPos.forEach((p,i)=>list.push({x:p.x,y:p.y,team:'red',label:''+(i+1),ability:getDefaultAbility()}));
+        bluePos.forEach((p,i)=>list.push({x:p.x,y:p.y,team:'blue',label:''+(i+1),ability:getDefaultAbility()}));
+        return list;
+    }
+
+    function getRole(x, team) {
+        if (team === 'red') return x < 120 ? 'GK' : x < 320 ? 'DEF' : x < 550 ? 'MID' : 'FWD';
+        return x > 880 ? 'GK' : x > 680 ? 'DEF' : x > 450 ? 'MID' : 'FWD';
+    }
+
+    function drawCanvas() {
+        ctx.clearRect(0, 0, width, height);
+        const grad = ctx.createLinearGradient(0, 0, 0, height);
+        grad.addColorStop(0, '#2e7d32'); grad.addColorStop(1, '#1b5e20');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 3;
+        ctx.strokeRect(30, 30, width-60, height-60);
+        ctx.beginPath(); ctx.moveTo(width/2, 30); ctx.lineTo(width/2, height-30); ctx.stroke();
+        lines.forEach(l => {
+            const f = players[l.fromIdx]; if (!f) return;
+            ctx.beginPath(); ctx.moveTo(f.x, f.y);
+            if (l.isShot) {
+                ctx.lineTo(l.targetX, l.targetY); ctx.strokeStyle = "#ff1744"; ctx.lineWidth = 4;
+            } else {
+                const t = players[l.toIdx]; ctx.lineTo(t.x, t.y); ctx.strokeStyle = '#ff9800'; ctx.lineWidth = 3; ctx.setLineDash([5, 5]);
+            }
+            ctx.stroke(); ctx.setLineDash([]);
+        });
+        players.forEach(p => {
+            ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, Math.PI*2);
+            ctx.fillStyle = p.team === 'red' ? '#ff5252' : '#448aff';
+            ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center'; ctx.fillText(p.label, p.x, p.y + 7);
+        });
+    }
+
+    function animatePlayersTo(newPositions, onComplete) {
+        const startTime = performance.now();
+        const duration = 1200;
+        const startPositions = players.map(p => ({ x: p.x, y: p.y }));
+        function step(now) {
+            const progress = Math.min((now - startTime) / duration, 1);
+            const ease = progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+            newPositions.forEach(target => {
+                const pIndex = players.findIndex(player => String(player.label) === String(target.label) && player.team === 'red');
+                if (pIndex !== -1) {
+                    const start = startPositions[pIndex];
+                    const safeX = Math.max(50, Math.min(950, target.x));
+                    const safeY = Math.max(50, Math.min(600, target.y));
+                    players[pIndex].x = start.x + (safeX - start.x) * ease;
+                    players[pIndex].y = start.y + (safeY - start.y) * ease;
+                }
+            });
+            drawCanvas();
+            if (progress < 1) requestAnimationFrame(step);
+            else if (onComplete) onComplete();
+        }
+        requestAnimationFrame(step);
+    }
+
+    // 🌟 核心：流式处理 AI 真实日志
+    async function analyzeWithAI() {
+        if (isAiPlaying) return;
+        const btn = document.getElementById('analyzeAiBtn');
+        const textDiv = document.getElementById('analysisText');
+        const skillContent = document.getElementById('skillConfig').value;
+        
+        btn.disabled = true;
+        isAiPlaying = true;
+        document.getElementById('analysisPanel').classList.add('show');
+        textDiv.innerText = "🚀 正在初始化请求...";
+
+        const teamData = players.map(p => ({
+            label: p.label, team: p.team === 'red' ? '红' : '蓝',
+            role: getRole(p.x, p.team),
+            stats: { pac: p.ability.v1, sho: p.ability.v2, pas: p.ability.v3, dri: p.ability.v4, def: p.ability.v5, phy: p.ability.v6 }
+        }));
+
+        try {
+            const response = await fetch('https://soccer-api-u8yn.onrender.com/api/deepseek', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ teamData, customSkill: skillContent })
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // 保持未完成的行在 buffer 中
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.stage) textDiv.innerText = data.stage;
+                            if (data.error) textDiv.innerText = "❌ 错误: " + data.error;
+                            if (data.final) handleFinalAction(data, textDiv, btn);
+                        } catch (e) { console.error("JSON 解析错误", e); }
                     }
                 }
-            },
-            required: ["logic", "positions", "updated_stats", "tactical_actions"]
+            }
+        } catch (err) {
+            textDiv.innerText = "❌ 连接失败";
+            isAiPlaying = false;
+            btn.disabled = false;
         }
     }
-}];
 
-// 4. 核心接口
-app.post('/api/deepseek', async (req, res) => {
-    if (!process.env.DEEPSEEK_API_KEY) return res.status(500).json({ error: '未配置 API Key' });
+    function handleFinalAction(data, textDiv, btn) {
+        if (data.updated_stats) {
+            data.updated_stats.forEach(item => {
+                const p = players.find(player => String(player.label) === String(item.label) && player.team === 'red');
+                if (p) Object.assign(p.ability, { v1: item.stats.pac, v2: item.stats.sho, v3: item.stats.pas, v4: item.stats.dri, v5: item.stats.def, v6: item.stats.phy });
+            });
+        }
+        
+        textDiv.innerText = `【AI 指导方案】\n${data.analysis}`;
+        lines = []; drawCanvas();
 
-    try {
-        const { teamData, customSkill } = req.body; 
-
-        // 🌟 深度优化：建立球场直觉 + 文字表达规范
-        const baseSystemPrompt = `你是一个具备【顶级足球地理直觉】的教练 Agent。
-你必须通过调用 generate_smart_formation 工具来响应。
-
-【文字表达规范】：
-1. 在 logic 字段（即给用户看的分析报告）中，绝对严禁出现任何坐标数值（如 x: 800, y: 300 等）。
-2. 请使用足球专业术语描述位置，例如：“禁区弧顶”、“肋部空档”、“边路走廊”、“高位压迫线”、“后场出球点”。
-3. 描述要专业、简洁、有感染力，像顶级教练在更衣室的战术演讲。
-
-【球场坐标系规范】：
-1. 场地范围：横轴 x [0-1000], 纵轴 y [0-650]。
-2. 进攻方向：红色方（我方）从左向右攻，对方球门中心位于 (1000, 325)。
-3. 站位逻辑：后卫 x[100-300], 中场 x[400-600], 前锋 x[700-950]。
-4. 动作逻辑：射门目标 targetX > 900, targetY 在 [250-400] 之间。
-
-【当前战术需求】：${customSkill || "执行常规排阵"}
-【当前球员快照】：${JSON.stringify(teamData)}`;
-
-        const completion = await client.chat.completions.create({
-            model: "deepseek-chat", 
-            messages: [
-                { role: "system", content: baseSystemPrompt },
-                { role: "user", content: "请根据战术需求下达指令。" }
-            ],
-            tools: tools,
-            tool_choice: { 
-                type: "function", 
-                function: { name: "generate_smart_formation" } 
-            }, 
-            max_tokens: 2000,
-            temperature: 0.3 
+        animatePlayersTo(data.new_player_data, () => {
+            if (data.tactical_actions && data.tactical_actions.length > 0) {
+                data.tactical_actions.forEach((act, index) => {
+                    setTimeout(() => {
+                        const fIdx = players.findIndex(p => String(p.label) === String(act.fromLabel) && p.team === 'red');
+                        if (act.type === 'pass') {
+                            const tIdx = players.findIndex(p => String(p.label) === String(act.toLabel) && p.team === 'red');
+                            if (fIdx !== -1 && tIdx !== -1) lines.push({ fromIdx: fIdx, toIdx: tIdx, isShot: false });
+                        } else if (act.type === 'shot') {
+                            if (fIdx !== -1) lines.push({ fromIdx: fIdx, isShot: true, targetX: act.targetX, targetY: act.targetY });
+                        }
+                        drawCanvas();
+                        if (index === data.tactical_actions.length - 1) { 
+                            isAiPlaying = false; 
+                            btn.disabled = false; 
+                        }
+                    }, index * 600);
+                });
+            } else { isAiPlaying = false; btn.disabled = false; }
         });
-
-        console.log("--- 🤖 DeepSeek 原始返回内容 ---");
-        console.log(JSON.stringify(completion.choices[0].message, null, 2));
-
-        const choice = completion.choices[0];
-
-        if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-            const toolCall = choice.message.tool_calls[0];
-            const args = JSON.parse(toolCall.function.arguments);
-            
-            return res.json({
-                analysis: args.logic,
-                execute_action: "UPDATE_PLAYERS",
-                new_player_data: args.positions,
-                updated_stats: args.updated_stats,
-                tactical_actions: args.tactical_actions
-            });
-        } else {
-            return res.json({
-                execute_action: "TEXT_ONLY",
-                analysis: choice.message.content || "指令生成失败。"
-            });
-        }
-
-    } catch (error) {
-        console.error('❌ 后端报错:', error.message);
-        res.status(500).json({ error: '执行失败', details: error.message });
     }
-});
 
-app.listen(PORT, () => {
-    console.log(`🚀 战术大师后端已启动，端口: ${PORT}`);
-});
+    document.getElementById('analyzeAiBtn').onclick = analyzeWithAI;
+    document.getElementById('resetBtn').onclick = () => { players = getDefaultPlayers(); lines = []; drawCanvas(); };
+    players = getDefaultPlayers(); drawCanvas();
+})();
+</script>
+</body>
+</html>
